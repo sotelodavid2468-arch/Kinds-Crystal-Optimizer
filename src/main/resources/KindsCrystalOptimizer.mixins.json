@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.kinds.kindscrystaloptimizer.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "ClientConnectionMixin",
+    "MinecraftUseDelayMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

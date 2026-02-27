@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "${mod_id}",
+  "version": "${version}",
+  "name": "${mod_name}",
+  "description": "Extremely fast client-side crystal break optimization with server opt-out support.",
+  "authors": [
+    "KinditMc"
+  ],
+  "license": "All Rights Reserved",
+  "icon": "assets/kindscrystaloptimizer/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.kinds.kindscrystaloptimizer.KindsCrystalOptimizer"
+    ]
+  },
+  "mixins": [
+    "KindsCrystalOptimizer.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "minecraft": ">=1.21.1 <=1.21.11",
+    "fabric-api": "*"
+  }
+}

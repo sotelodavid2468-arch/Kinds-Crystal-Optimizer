@@ -1,0 +1,95 @@
+buildscript {
+    repositories {
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.guardsquare:proguard-gradle:7.5.0'
+    }
+}
+
+import proguard.gradle.ProGuardTask
+
+plugins {
+    id 'fabric-loom' version '1.13-SNAPSHOT'
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+base {
+    archivesName = project.archives_base_name
+}
+version = project.mod_version
+group = project.maven_group
+
+repositories {
+    mavenCentral()
+    maven { url = 'https://maven.fabricmc.net/' }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings loom.officialMojangMappings()
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+
+    compileOnly "org.projectlombok:lombok:1.18.42"
+    annotationProcessor "org.projectlombok:lombok:1.18.42"
+
+    compileOnly "org.jspecify:jspecify:1.0.0"
+}
+
+processResources {
+    inputs.property "version", project.version
+    inputs.property "mod_id", project.mod_id
+    inputs.property "mod_name", project.mod_name
+    inputs.property "loader_version", project.loader_version
+    inputs.property "minecraft_version", project.minecraft_version
+
+    filesMatching("fabric.mod.json") {
+        expand "version": project.version,
+               "mod_id": project.mod_id,
+               "mod_name": project.mod_name,
+               "loader_version": project.loader_version,
+               "minecraft_version": project.minecraft_version
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 21
+}
+
+sourceSets {
+    main {
+        java {
+            exclude "skid/**"
+        }
+    }
+}
+
+jar {
+    dependsOn(classes)
+    from("$buildDir/classes/java/main")
+    from("$buildDir/resources/main")
+    from("LICENSE") {
+        rename { "${it}_${project.base.archivesName.get()}" }
+    }
+}
+
+tasks.register("proguardJar", ProGuardTask) {
+    dependsOn tasks.named("remapJar")
+    injars(tasks.named("remapJar").get().archiveFile.get().asFile)
+    outjars("$buildDir/libs/${project.archives_base_name}-${project.version}-obf.jar")
+    configuration file("proguard-rules.pro")
+    libraryjars(configurations.runtimeClasspath)
+    libraryjars("${System.getProperty('java.home')}/jmods/java.base.jmod", jarfilter: "!**.jar", filter: "!module-info.class")
+}
+
+tasks.named("build").configure {
+    // Skip proguard to speed up build and avoid obfuscation.
+}
