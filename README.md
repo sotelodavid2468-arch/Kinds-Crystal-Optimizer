@@ -1,6 +1,6 @@
 # Kind's Crystal Optimizer
 
-High-performance client-side crystal optimizer for Fabric.
+Kind's Crystal Optimizer is a performance-focused Fabric mod that reduces perceived crystal placement and break delay using client-side prediction. It removes broken crystals instantly on the client instead of waiting for server confirmation, resulting in smoother crystal interactions, especially on high-latency connections.
 
 ## Minecraft Versions
 

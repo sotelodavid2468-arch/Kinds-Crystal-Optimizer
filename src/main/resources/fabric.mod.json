@@ -3,7 +3,7 @@
   "id": "${mod_id}",
   "version": "${version}",
   "name": "${mod_name}",
-  "description": "Extremely fast client-side crystal break optimization with server opt-out support.",
+  "description": "Kind's Crystal Optimizer reduces perceived crystal place and break delay with client-side prediction, improving responsiveness in high-latency environments while keeping server opt-out support.",
   "authors": [
     "KinditMc"
   ],

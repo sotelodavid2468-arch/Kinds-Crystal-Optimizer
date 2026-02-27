@@ -3,25 +3,33 @@ package com.kinds.kindscrystaloptimizer.util;
 public final class PerformanceGuard {
 
     private static final long WINDOW_NANOS = 1_000_000_000L;
-    private static final long BREAK_ENTITY_COOLDOWN_NANOS = 60_000_000L;
+    private static final long BURST_WINDOW_NANOS = 120_000_000L;
+    private static final int PLACE_BURST_LIMIT = 8;
+    private static final int BREAK_BURST_LIMIT = 10;
+    private static final long BREAK_ENTITY_COOLDOWN_NANOS = 28_000_000L;
     private static final long DTAP_THRESHOLD_NANOS = 220_000_000L;
     private static final long DTAP_BOOST_DURATION_NANOS = 320_000_000L;
-    private static final int DTAP_EXTRA_PLACE_BOOSTS = 24;
-    private static final long PHASE_FAST_NANOS = 180_000_000L;
-    private static final long PHASE_SLOW_NANOS = 160_000_000L;
-    private static final long PLACE_FAST_INTERVAL_NANOS = 5_000_000L;
-    private static final long PLACE_SLOW_INTERVAL_NANOS = 16_000_000L;
-    private static final long BREAK_FAST_INTERVAL_NANOS = 9_000_000L;
-    private static final long BREAK_SLOW_INTERVAL_NANOS = 24_000_000L;
+    private static final int DTAP_EXTRA_PLACE_BOOSTS = 44;
+    private static final long PHASE_FAST_NANOS = 220_000_000L;
+    private static final long PHASE_STEADY_NANOS = 180_000_000L;
+    private static final long PHASE_BREAK_SLOW_NANOS = 145_000_000L;
+    private static final long PLACE_FAST_INTERVAL_NANOS = 1_800_000L;
+    private static final long PLACE_STEADY_INTERVAL_NANOS = 4_200_000L;
+    private static final long BREAK_FAST_INTERVAL_NANOS = 4_800_000L;
+    private static final long BREAK_SLOW_INTERVAL_NANOS = 10_500_000L;
 
     private final int maxPlaceBoostsPerSecond;
     private final int maxBreakPredictionsPerSecond;
 
     private long placeWindowStartNanos;
     private int placeBoostsInWindow;
+    private long placeBurstWindowStartNanos;
+    private int placeBoostsInBurstWindow;
 
     private long breakWindowStartNanos;
     private int breakPredictionsInWindow;
+    private long breakBurstWindowStartNanos;
+    private int breakPredictionsInBurstWindow;
 
     private int lastBrokenEntityId;
     private long lastBrokenEntityUntilNanos;
@@ -40,7 +48,7 @@ public final class PerformanceGuard {
     private long dtapBoostUntilNanos;
 
     public PerformanceGuard() {
-        this(80, 100);
+        this(140, 180);
     }
 
     public PerformanceGuard(int maxPlaceBoostsPerSecond, int maxBreakPredictionsPerSecond) {
@@ -49,7 +57,9 @@ public final class PerformanceGuard {
 
         long now = System.nanoTime();
         placeWindowStartNanos = now;
+        placeBurstWindowStartNanos = now;
         breakWindowStartNanos = now;
+        breakBurstWindowStartNanos = now;
         placeFastPhase = true;
         breakFastPhase = true;
         placePhaseStartNanos = now;
@@ -77,16 +87,21 @@ public final class PerformanceGuard {
             placeWindowStartNanos = now;
             placeBoostsInWindow = 0;
         }
+        if (now - placeBurstWindowStartNanos >= BURST_WINDOW_NANOS) {
+            placeBurstWindowStartNanos = now;
+            placeBoostsInBurstWindow = 0;
+        }
 
+        boolean dtapBoostActive = now < dtapBoostUntilNanos;
         int activeBudget = maxPlaceBoostsPerSecond;
-        if (now < dtapBoostUntilNanos) {
+        if (dtapBoostActive) {
             activeBudget += DTAP_EXTRA_PLACE_BOOSTS;
         }
 
         int loadPercent = (placeBoostsInWindow * 100) / Math.max(1, activeBudget);
-        updatePlacePhase(now, loadPercent);
+        updatePlacePhase(now, loadPercent, dtapBoostActive);
 
-        long minInterval = resolvePlaceMinInterval(now, loadPercent, now < dtapBoostUntilNanos);
+        long minInterval = resolvePlaceMinInterval(now, loadPercent, dtapBoostActive);
         if (placeLastGrantNanos != 0L && now - placeLastGrantNanos < minInterval) {
             return false;
         }
@@ -94,8 +109,12 @@ public final class PerformanceGuard {
         if (placeBoostsInWindow >= activeBudget) {
             return false;
         }
+        if (placeBoostsInBurstWindow >= PLACE_BURST_LIMIT) {
+            return false;
+        }
 
         placeBoostsInWindow++;
+        placeBoostsInBurstWindow++;
         placeLastGrantNanos = now;
         return true;
     }
@@ -111,6 +130,10 @@ public final class PerformanceGuard {
             breakWindowStartNanos = now;
             breakPredictionsInWindow = 0;
         }
+        if (now - breakBurstWindowStartNanos >= BURST_WINDOW_NANOS) {
+            breakBurstWindowStartNanos = now;
+            breakPredictionsInBurstWindow = 0;
+        }
 
         int loadPercent = (breakPredictionsInWindow * 100) / Math.max(1, maxBreakPredictionsPerSecond);
         updateBreakPhase(now, loadPercent);
@@ -123,26 +146,35 @@ public final class PerformanceGuard {
         if (breakPredictionsInWindow >= maxBreakPredictionsPerSecond) {
             return false;
         }
+        if (breakPredictionsInBurstWindow >= BREAK_BURST_LIMIT) {
+            return false;
+        }
 
         breakPredictionsInWindow++;
+        breakPredictionsInBurstWindow++;
         breakLastGrantNanos = now;
         lastBrokenEntityId = entityId;
         lastBrokenEntityUntilNanos = now + BREAK_ENTITY_COOLDOWN_NANOS;
         return true;
     }
 
-    private void updatePlacePhase(long now, int loadPercent) {
+    private void updatePlacePhase(long now, int loadPercent, boolean dtapBoostActive) {
         long fastDuration = PHASE_FAST_NANOS;
-        long slowDuration = PHASE_SLOW_NANOS;
-        if (loadPercent >= 80) {
-            fastDuration = Math.max(90_000_000L, fastDuration - 40_000_000L);
-            slowDuration += 70_000_000L;
+        long steadyDuration = PHASE_STEADY_NANOS;
+        if (loadPercent >= 90) {
+            fastDuration = Math.max(95_000_000L, fastDuration - 35_000_000L);
+            steadyDuration += 60_000_000L;
         } else if (loadPercent <= 35) {
-            fastDuration += 30_000_000L;
-            slowDuration = Math.max(110_000_000L, slowDuration - 20_000_000L);
+            fastDuration += 25_000_000L;
+            steadyDuration = Math.max(170_000_000L, steadyDuration - 35_000_000L);
         }
 
-        long phaseDuration = placeFastPhase ? fastDuration : slowDuration;
+        if (dtapBoostActive) {
+            fastDuration += 28_000_000L;
+            steadyDuration = Math.max(150_000_000L, steadyDuration - 20_000_000L);
+        }
+
+        long phaseDuration = placeFastPhase ? fastDuration : steadyDuration;
         if (now - placePhaseStartNanos >= phaseDuration) {
             placeFastPhase = !placeFastPhase;
             placePhaseStartNanos = now;
@@ -151,49 +183,48 @@ public final class PerformanceGuard {
 
     private long resolvePlaceMinInterval(long now, int loadPercent, boolean dtapBoostActive) {
         long fastInterval = PLACE_FAST_INTERVAL_NANOS;
-        long slowInterval = PLACE_SLOW_INTERVAL_NANOS;
+        long steadyInterval = PLACE_STEADY_INTERVAL_NANOS;
 
-        if (loadPercent >= 80) {
-            fastInterval += 2_000_000L;
-            slowInterval += 6_000_000L;
+        if (loadPercent >= 90) {
+            fastInterval += 450_000L;
+            steadyInterval += 1_300_000L;
         } else if (loadPercent <= 35) {
-            fastInterval = Math.max(3_600_000L, fastInterval - 900_000L);
-            slowInterval = Math.max(12_500_000L, slowInterval - 1_500_000L);
+            fastInterval = Math.max(1_500_000L, fastInterval - 400_000L);
+            steadyInterval = Math.max(3_900_000L, steadyInterval - 500_000L);
         }
 
         if (dtapBoostActive) {
-            fastInterval = Math.max(2_700_000L, fastInterval - 900_000L);
+            fastInterval = Math.max(1_300_000L, fastInterval - 700_000L);
+            steadyInterval = Math.max(3_800_000L, steadyInterval - 400_000L);
         }
 
-        long phaseInterval = placeFastPhase ? fastInterval : slowInterval;
+        long phaseInterval = placeFastPhase ? fastInterval : steadyInterval;
         long phaseElapsed = now - placePhaseStartNanos;
         if (placeFastPhase) {
-            if (phaseElapsed < 42_000_000L) {
-                phaseInterval = Math.max(2_600_000L, phaseInterval - 700_000L);
-            } else if (phaseElapsed > 130_000_000L) {
-                phaseInterval += 1_200_000L;
+            if (phaseElapsed < 36_000_000L) {
+                phaseInterval = Math.max(1_300_000L, phaseInterval - 700_000L);
+            } else if (phaseElapsed > 125_000_000L) {
+                phaseInterval += 400_000L;
             }
-        } else if (phaseElapsed < 35_000_000L) {
-            phaseInterval = Math.max(7_000_000L, phaseInterval - 1_000_000L);
         }
 
-        long jitterRange = 2_400_000L;
-        if (loadPercent >= 80) {
-            jitterRange = 1_500_000L;
-        } else if (loadPercent <= 35) {
-            jitterRange = 3_100_000L;
+        long jitterRange = placeFastPhase ? 900_000L : 130_000L;
+        if (loadPercent >= 90) {
+            jitterRange = placeFastPhase ? 550_000L : 80_000L;
+        } else if (loadPercent <= 35 && placeFastPhase) {
+            jitterRange = 1_150_000L;
         }
-        if (dtapBoostActive) {
-            jitterRange += 600_000L;
+        if (dtapBoostActive && placeFastPhase) {
+            jitterRange += 450_000L;
         }
 
         long jittered = phaseInterval + nextSignedPlaceJitter(jitterRange);
-        return Math.max(2_600_000L, jittered);
+        return Math.max(placeFastPhase ? 1_300_000L : 3_800_000L, jittered);
     }
 
     private void updateBreakPhase(long now, int loadPercent) {
         long fastDuration = PHASE_FAST_NANOS;
-        long slowDuration = PHASE_SLOW_NANOS;
+        long slowDuration = PHASE_BREAK_SLOW_NANOS;
         if (loadPercent >= 80) {
             fastDuration = Math.max(95_000_000L, fastDuration - 35_000_000L);
             slowDuration += 65_000_000L;
@@ -212,11 +243,11 @@ public final class PerformanceGuard {
         long fastInterval = BREAK_FAST_INTERVAL_NANOS;
         long slowInterval = BREAK_SLOW_INTERVAL_NANOS;
         if (loadPercent >= 80) {
-            fastInterval += 2_000_000L;
-            slowInterval += 6_000_000L;
+            fastInterval += 900_000L;
+            slowInterval += 2_000_000L;
         } else if (loadPercent <= 35) {
-            fastInterval = Math.max(6_000_000L, fastInterval - 1_000_000L);
-            slowInterval = Math.max(18_000_000L, slowInterval - 2_000_000L);
+            fastInterval = Math.max(3_400_000L, fastInterval - 700_000L);
+            slowInterval = Math.max(8_400_000L, slowInterval - 900_000L);
         }
 
         return breakFastPhase ? fastInterval : slowInterval;
